@@ -1,0 +1,57 @@
+name: Build & push music-discovery image
+
+# This fork carries music discovery (MusicBrainz search + Lidarr requesting)
+# on top of upstream Seerr. Upstream's own release.yml only fires on a `v*`
+# tag and pushes to the seerr/seerr Docker Hub org, which this fork has no
+# credentials for, so this is a separate, minimal workflow: it builds this
+# branch's Dockerfile and pushes it to this repo's own GitHub Container
+# Registry package instead, using the repo's built-in GITHUB_TOKEN (no extra
+# secrets to configure).
+
+on:
+  push:
+    branches: [ "feature/lidarr-settings-card" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:music-discovery
+            ghcr.io/${{ github.repository }}:music-discovery-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "Pushed ghcr.io/${{ github.repository }}:music-discovery" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "First push: go to the repo's **Packages** tab -> this package -> **Package settings** -> **Change visibility** -> Public, so others can \`docker pull\` it without logging in." >> "$GITHUB_STEP_SUMMARY"

@@ -44,6 +44,19 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          # COMMIT_TAG must be set to exactly "local" (never left empty/unset).
+          # The server reads it into its live /api/v1/status response, and the
+          # Next.js client bundle bakes its own copy in at build time via
+          # next.config.mjs's `process.env.COMMIT_TAG || 'local'`. Leave the
+          # build arg unset and the two diverge (server gets "", client gets
+          # the fallback "local"), which makes StatusChecker believe the app
+          # is always out of date -- an un-dismissable "Seerr Updated, please
+          # reload" banner, forever, in every browser, since no reload changes
+          # either side's value. Setting it explicitly keeps both sides equal
+          # and also short-circuits the update-available check in
+          # server/routes/index.ts (it only runs when commitTag !== 'local').
+          build-args: |
+            COMMIT_TAG=local
           tags: |
             ghcr.io/${{ github.repository }}:music-discovery
             ghcr.io/${{ github.repository }}:music-discovery-${{ github.sha }}

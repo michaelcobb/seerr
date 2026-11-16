@@ -5713,6 +5713,59 @@ paths:
                       $ref: '#/components/schemas/MediaInfo'
                   playCount:
                     type: number
+  /music/search:
+    get:
+      summary: Search MusicBrainz for artists
+      description: Returns a list of artists matching the query, from MusicBrainz.
+      tags:
+        - music
+      parameters:
+        - in: query
+          name: query
+          required: true
+          schema:
+            type: string
+            example: 'Daft Punk'
+      responses:
+        '200':
+          description: OK
+  /music/artist/{mbid}:
+    get:
+      summary: Get artist details
+      description: Returns artist details and albums from MusicBrainz, plus whether the artist has already been added to Lidarr.
+      tags:
+        - music
+      parameters:
+        - in: path
+          name: mbid
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+  /music/request:
+    post:
+      summary: Request an artist
+      description: Looks the artist up in Lidarr by MusicBrainz ID and adds/monitors it there.
+      tags:
+        - music
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mbid:
+                  type: string
+              required:
+                - mbid
+      responses:
+        '201':
+          description: Artist added to Lidarr
+        '412':
+          description: No Lidarr server is configured
   /search:
     get:
       summary: Search for movies, TV shows, or people

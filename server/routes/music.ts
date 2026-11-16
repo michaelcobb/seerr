@@ -83,6 +83,7 @@ musicRoutes.get('/search', async (req, res, next) => {
         disambiguation: artist.disambiguation,
         country: artist.country,
         imageUrl: images[i].thumbUrl,
+        beginYear: artist['life-span']?.begin?.slice(0, 4),
       })),
     });
   } catch (e) {
@@ -131,6 +132,10 @@ musicRoutes.get<{ mbid: string }>('/artist/:mbid', async (req, res, next) => {
       country: artist.country,
       imageUrl: images.thumbUrl,
       backgroundUrl: images.backgroundUrl,
+      beginYear: artist['life-span']?.begin?.slice(0, 4),
+      endYear: artist['life-span']?.ended
+        ? artist['life-span']?.end?.slice(0, 4)
+        : undefined,
       releaseGroups: (artist['release-groups'] ?? [])
         .filter((rg) => rg['primary-type'] === 'Album')
         .sort((a, b) =>

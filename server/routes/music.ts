@@ -119,7 +119,7 @@ musicRoutes.get<{ mbid: string }>('/artist/:mbid', async (req, res, next) => {
   }
 });
 
-musicRoutes.post<unknown, Record<string, unknown>, { mbid: string }>(
+musicRoutes.post(
   '/request',
   isAuthenticated(Permission.REQUEST),
   async (req, res, next) => {
@@ -132,8 +132,10 @@ musicRoutes.post<unknown, Record<string, unknown>, { mbid: string }>(
       });
     }
 
+    const { mbid } = req.body as { mbid: string };
+
     try {
-      const lookup = await lidarr.api.lookupArtistByMbid(req.body.mbid);
+      const lookup = await lidarr.api.lookupArtistByMbid(mbid);
 
       if (!lookup) {
         return next({

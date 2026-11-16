@@ -90,6 +90,13 @@ export interface RadarrSettings extends DVRSettings {
   minimumAvailability: string;
 }
 
+// Lidarr adds nothing on top of the base DVR connection fields. The
+// is4k/activeProfileName/etc. fields inherited from DVRSettings exist for
+// parity with Radarr/Sonarr's card UI, but nothing in Seerr's request
+// pipeline reads them for Lidarr yet -- this type only backs the settings
+// card (connection storage + "Test" button), not a request flow.
+export type LidarrSettings = DVRSettings;
+
 export interface SonarrSettings extends DVRSettings {
   seriesType: 'standard' | 'daily' | 'anime';
   animeSeriesType: 'standard' | 'daily' | 'anime';
@@ -385,6 +392,7 @@ export interface AllSettings {
   tautulli: TautulliSettings;
   radarr: RadarrSettings[];
   sonarr: SonarrSettings[];
+  lidarr: LidarrSettings[];
   public: PublicSettings;
   notifications: NotificationSettings;
   jobs: Record<JobId, JobSettings>;
@@ -463,6 +471,7 @@ class Settings {
       },
       radarr: [],
       sonarr: [],
+      lidarr: [],
       public: {
         initialized: false,
       },
@@ -700,6 +709,14 @@ class Settings {
 
   set sonarr(data: SonarrSettings[]) {
     this.data.sonarr = data;
+  }
+
+  get lidarr(): LidarrSettings[] {
+    return this.data.lidarr;
+  }
+
+  set lidarr(data: LidarrSettings[]) {
+    this.data.lidarr = data;
   }
 
   get public(): PublicSettings {

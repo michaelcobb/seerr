@@ -7,6 +7,7 @@ export type AvailableCacheIds =
   | 'sonarr'
   | 'lidarr'
   | 'musicbrainz'
+  | 'fanarttv'
   | 'rt'
   | 'imdb'
   | 'github'
@@ -34,6 +35,7 @@ const LIDARR_MAX_KEYS = 64;
 
 // One key per search term plus one per artist/release-group lookup.
 const MUSICBRAINZ_MAX_KEYS = 2000;
+const FANARTTV_MAX_KEYS = 2000;
 
 // One key per searched title, each holding twenty search hits.
 const RT_MAX_KEYS = 500;
@@ -237,6 +239,10 @@ class CacheManager {
     musicbrainz: new Cache('musicbrainz', 'MusicBrainz API', {
       stdTtl: 21600,
       max: MUSICBRAINZ_MAX_KEYS,
+    }),
+    fanarttv: new Cache('fanarttv', 'Fanart.tv API', {
+      stdTtl: 21600,
+      max: FANARTTV_MAX_KEYS,
     }),
     rt: new Cache('rt', 'Rotten Tomatoes API', {
       stdTtl: 43200,

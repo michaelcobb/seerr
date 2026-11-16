@@ -123,6 +123,11 @@ export enum MetadataProviderType {
 export interface MetadataSettings {
   tv: MetadataProviderType;
   anime: MetadataProviderType;
+  // Artist images for the music search/discover UI. MusicBrainz is
+  // metadata-only (no images), so this is a separate, optional provider key
+  // rather than another entry in MetadataProviderType -- there's no TMDB-style
+  // choice to make, just on (key set) or off.
+  fanartTvApiKey: string;
 }
 
 export interface ProxySettings {
@@ -468,6 +473,7 @@ class Settings {
       metadataSettings: {
         tv: MetadataProviderType.TMDB,
         anime: MetadataProviderType.TMDB,
+        fanartTvApiKey: '',
       },
       radarr: [],
       sonarr: [],

@@ -1,3 +1,4 @@
+import FanartTvAPI from '@server/api/fanarttv';
 import TheMovieDb from '@server/api/themoviedb';
 import Tvdb from '@server/api/tvdb';
 import {
@@ -21,6 +22,7 @@ metadataRoutes.get('/', (_req, res) => {
   res.status(200).json({
     tv: settings.metadataSettings.tv,
     anime: settings.metadataSettings.anime,
+    fanartTvApiKey: settings.metadataSettings.fanartTvApiKey,
   });
 });
 
@@ -30,6 +32,7 @@ metadataRoutes.put('/', async (req, res) => {
 
   let tvdbTest = -1;
   let tmdbTest = -1;
+  let fanarttvTest = -1;
 
   try {
     if (
@@ -65,13 +68,30 @@ metadataRoutes.put('/', async (req, res) => {
     });
   }
 
+  // Only test the key if one was actually typed in -- an empty key is a
+  // valid "I don't want artist images" choice, not a failed test.
+  if (body.fanartTvApiKey) {
+    try {
+      fanarttvTest = 0;
+      const fanarttv = new FanartTvAPI(body.fanartTvApiKey);
+      await fanarttv.test();
+      fanarttvTest = 1;
+    } catch (e) {
+      logger.error('Failed to test Fanart.tv API key', {
+        label: 'Metadata',
+        message: e.message,
+      });
+    }
+  }
+
   // If a test failed, return the test results
-  if (tvdbTest === 0 || tmdbTest === 0) {
+  if (tvdbTest === 0 || tmdbTest === 0 || fanarttvTest === 0) {
     return res.status(500).json({
       success: false,
       tests: {
         tvdb: getTestResultString(tvdbTest),
         tmdb: getTestResultString(tmdbTest),
+        fanarttv: getTestResultString(fanarttvTest),
       },
     });
   }
@@ -79,6 +99,7 @@ metadataRoutes.put('/', async (req, res) => {
   settings.metadataSettings = {
     tv: body.tv,
     anime: body.anime,
+    fanartTvApiKey: body.fanartTvApiKey ?? '',
   };
   await settings.save();
 
@@ -86,9 +107,11 @@ metadataRoutes.put('/', async (req, res) => {
     success: true,
     tv: body.tv,
     anime: body.anime,
+    fanartTvApiKey: settings.metadataSettings.fanartTvApiKey,
     tests: {
       tvdb: getTestResultString(tvdbTest),
       tmdb: getTestResultString(tmdbTest),
+      fanarttv: getTestResultString(fanarttvTest),
     },
   });
 });
@@ -96,9 +119,14 @@ metadataRoutes.put('/', async (req, res) => {
 metadataRoutes.post('/test', async (req, res) => {
   let tvdbTest = -1;
   let tmdbTest = -1;
+  let fanarttvTest = -1;
 
   try {
-    const body = req.body as { tmdb: boolean; tvdb: boolean };
+    const body = req.body as {
+      tmdb: boolean;
+      tvdb: boolean;
+      fanartTvApiKey?: string;
+    };
 
     try {
       if (body.tmdb) {
@@ -128,7 +156,21 @@ metadataRoutes.post('/test', async (req, res) => {
       });
     }
 
-    const success = !(tvdbTest === 0 || tmdbTest === 0);
+    try {
+      if (body.fanartTvApiKey) {
+        fanarttvTest = 0;
+        const fanarttv = new FanartTvAPI(body.fanartTvApiKey);
+        await fanarttv.test();
+        fanarttvTest = 1;
+      }
+    } catch (e) {
+      logger.error('Failed to test metadata provider', {
+        label: 'MetadataProvider',
+        message: e.message,
+      });
+    }
+
+    const success = !(tvdbTest === 0 || tmdbTest === 0 || fanarttvTest === 0);
     const statusCode = success ? 200 : 500;
 
     return res.status(statusCode).json({
@@ -136,6 +178,7 @@ metadataRoutes.post('/test', async (req, res) => {
       tests: {
         tmdb: getTestResultString(tmdbTest),
         tvdb: getTestResultString(tvdbTest),
+        fanarttv: getTestResultString(fanarttvTest),
       },
     });
   } catch (e) {
@@ -144,6 +187,7 @@ metadataRoutes.post('/test', async (req, res) => {
       tests: {
         tmdb: getTestResultString(tmdbTest),
         tvdb: getTestResultString(tvdbTest),
+        fanarttv: getTestResultString(fanarttvTest),
       },
       error: e.message,
     });

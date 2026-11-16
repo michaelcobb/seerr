@@ -25,6 +25,8 @@ interface ArtistDetailsResponse {
   disambiguation?: string;
   type?: string;
   country?: string;
+  imageUrl?: string;
+  backgroundUrl?: string;
   releaseGroups: { id: string; title: string; firstReleaseDate?: string }[];
   canRequest: boolean;
   alreadyAdded: boolean;
@@ -86,11 +88,32 @@ const ArtistDetails = () => {
   return (
     <>
       <PageTitle title={artist.name} />
+      {artist.backgroundUrl && (
+        <div className="relative -mx-4 -mt-4 mb-5 h-48 overflow-hidden sm:-mx-8 sm:-mt-8 sm:h-64">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={artist.backgroundUrl}
+            alt=""
+            className="h-full w-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/40 to-transparent" />
+        </div>
+      )}
       <div className="mb-5 mt-1 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <Header subtext={artist.disambiguation}>{artist.name}</Header>
-          <div className="mt-1 text-sm uppercase text-gray-500">
-            {[artist.type, artist.country].filter(Boolean).join(' · ')}
+        <div className="flex items-center gap-4">
+          {artist.imageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={artist.imageUrl}
+              alt=""
+              className="h-16 w-16 shrink-0 rounded-full object-cover ring-2 ring-gray-700"
+            />
+          )}
+          <div>
+            <Header subtext={artist.disambiguation}>{artist.name}</Header>
+            <div className="mt-1 text-sm uppercase text-gray-500">
+              {[artist.type, artist.country].filter(Boolean).join(' · ')}
+            </div>
           </div>
         </div>
         {artist.canRequest ? (

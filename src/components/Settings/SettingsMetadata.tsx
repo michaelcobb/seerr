@@ -5,6 +5,7 @@ import PageTitle from '@app/components/Common/PageTitle';
 import MetadataSelector, {
   MetadataProviderType,
 } from '@app/components/MetadataSelector';
+import SensitiveInput from '@app/components/Common/SensitiveInput';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
@@ -34,8 +35,15 @@ const messages = defineMessages('components.Settings', {
     'TMDB provider does not work, please select another metadata provider',
   tvdbProviderDoesnotWork:
     'TVDB provider does not work, please select another metadata provider',
+  fanarttvProviderDoesnotWork:
+    'Fanart.tv API key is not valid',
   allChosenProvidersAreOperational:
     'All chosen metadata providers are operational',
+  musicArtistArt: 'Music Artist Art',
+  fanartTvApiKeyLabel: 'Fanart.tv API Key',
+  fanartTvApiKeyDescription:
+    'Optional. Shows artist photos in music search and discovery, the same provider Lidarr uses for artist art. Leave blank to show a generic placeholder instead.',
+  getApiKey: 'Get an API key',
   connectionTestFailed: 'Connection test failed',
   failedToSaveMetadataSettings: 'Failed to save metadata provider settings',
   metadataSettingsSaved: 'Metadata provider settings saved',
@@ -46,11 +54,13 @@ type ProviderStatus = 'ok' | 'not tested' | 'failed';
 interface ProviderResponse {
   tvdb: ProviderStatus;
   tmdb: ProviderStatus;
+  fanarttv: ProviderStatus;
 }
 
 interface MetadataValues {
   tv: MetadataProviderType;
   anime: MetadataProviderType;
+  fanartTvApiKey: string;
 }
 
 interface MetadataSettings {
@@ -64,6 +74,7 @@ const SettingsMetadata = () => {
   const defaultStatus: ProviderResponse = {
     tmdb: 'not tested',
     tvdb: 'not tested',
+    fanarttv: 'not tested',
   };
 
   const [providerStatus, setProviderStatus] =
@@ -75,12 +86,14 @@ const SettingsMetadata = () => {
       const response = await axios.get<{
         tv: MetadataProviderType;
         anime: MetadataProviderType;
+        fanartTvApiKey: string;
       }>(url);
 
       return {
         metadata: {
           tv: response.data.tv,
           anime: response.data.anime,
+          fanartTvApiKey: response.data.fanartTvApiKey ?? '',
         },
       };
     }
@@ -95,10 +108,12 @@ const SettingsMetadata = () => {
     const useTvdb =
       values.tv === MetadataProviderType.TVDB ||
       values.anime === MetadataProviderType.TVDB;
+    const useFanartTv = !!values.fanartTvApiKey;
 
     const testData = {
       tmdb: useTmdb,
       tvdb: useTvdb,
+      fanartTvApiKey: useFanartTv ? values.fanartTvApiKey : undefined,
     };
 
     try {
@@ -110,6 +125,7 @@ const SettingsMetadata = () => {
       const newStatus: ProviderResponse = {
         tmdb: useTmdb ? response.data.tests.tmdb : 'not tested',
         tvdb: useTvdb ? response.data.tests.tvdb : 'not tested',
+        fanarttv: useFanartTv ? response.data.tests.fanarttv : 'not tested',
       };
 
       setProviderStatus(newStatus);
@@ -126,6 +142,9 @@ const SettingsMetadata = () => {
           const newStatus: ProviderResponse = {
             tmdb: useTmdb ? errorData.tests.tmdb : 'not tested',
             tvdb: useTvdb ? errorData.tests.tvdb : 'not tested',
+            fanarttv: useFanartTv
+              ? errorData.tests.fanarttv
+              : 'not tested',
           };
 
           setProviderStatus(newStatus);
@@ -146,13 +165,16 @@ const SettingsMetadata = () => {
         success: boolean;
         tv: MetadataProviderType;
         anime: MetadataProviderType;
+        fanartTvApiKey: string;
         tests?: {
           tvdb: ProviderStatus;
           tmdb: ProviderStatus;
+          fanarttv: ProviderStatus;
         };
       }>('/api/v1/settings/metadatas', {
         tv: values.tv,
         anime: values.anime,
+        fanartTvApiKey: values.fanartTvApiKey,
       });
 
       // Update metadata provider status if available
@@ -166,6 +188,7 @@ const SettingsMetadata = () => {
         setProviderStatus({
           tmdb: mapStatusValue(response.data.tests.tmdb),
           tvdb: mapStatusValue(response.data.tests.tvdb),
+          fanarttv: mapStatusValue(response.data.tests.fanarttv),
         });
       }
 
@@ -174,6 +197,7 @@ const SettingsMetadata = () => {
         metadata: {
           tv: response.data.tv,
           anime: response.data.anime,
+          fanartTvApiKey: response.data.fanartTvApiKey ?? '',
         },
       };
     } catch (error) {
@@ -184,6 +208,7 @@ const SettingsMetadata = () => {
           tests?: {
             tvdb: string;
             tmdb: string;
+            fanarttv: string;
           };
         };
 
@@ -199,6 +224,7 @@ const SettingsMetadata = () => {
           setProviderStatus({
             tmdb: mapStatusValue(errorData.tests.tmdb),
             tvdb: mapStatusValue(errorData.tests.tvdb),
+            fanarttv: mapStatusValue(errorData.tests.fanarttv),
           });
         }
       }
@@ -257,6 +283,7 @@ const SettingsMetadata = () => {
   const initialValues: MetadataValues = data?.metadata || {
     tv: MetadataProviderType.TMDB,
     anime: MetadataProviderType.TMDB,
+    fanartTvApiKey: '',
   };
 
   return (
@@ -301,6 +328,17 @@ const SettingsMetadata = () => {
             >
               <Badge badgeType={getBadgeType(providerStatus.tvdb)}>
                 {getStatusMessage(providerStatus.tvdb)}
+              </Badge>
+            </span>
+          </div>
+          <div className="flex items-center">
+            <span className="mr-2 w-24">Fanart.tv:</span>
+            <span
+              className={`text-sm ${getStatusClass(providerStatus.fanarttv)}`}
+              data-testid="fanarttv-status"
+            >
+              <Badge badgeType={getBadgeType(providerStatus.fanarttv)}>
+                {getStatusMessage(providerStatus.fanarttv)}
               </Badge>
             </span>
           </div>
@@ -385,6 +423,39 @@ const SettingsMetadata = () => {
                   </div>
                 </div>
 
+                <div className="mb-6 mt-8">
+                  <h2 className="heading">
+                    {intl.formatMessage(messages.musicArtistArt)}
+                  </h2>
+                  <p className="description">
+                    {intl.formatMessage(messages.fanartTvApiKeyDescription)}{' '}
+                    <a
+                      href="https://fanart.tv/get-an-api-key/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-400 hover:underline"
+                    >
+                      {intl.formatMessage(messages.getApiKey)}
+                    </a>
+                  </p>
+                </div>
+
+                <div className="form-row">
+                  <label htmlFor="fanartTvApiKey" className="text-label">
+                    {intl.formatMessage(messages.fanartTvApiKeyLabel)}
+                  </label>
+                  <div className="form-input-area">
+                    <div className="form-input-field">
+                      <SensitiveInput
+                        as="field"
+                        id="fanartTvApiKey"
+                        name="metadata.fanartTvApiKey"
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="actions">
                   <div className="flex justify-end">
                     <span className="ml-3 inline-flex rounded-md shadow-sm">
@@ -411,6 +482,16 @@ const SettingsMetadata = () => {
                               addToast(
                                 intl.formatMessage(
                                   messages.tmdbProviderDoesnotWork
+                                ),
+                                {
+                                  appearance: 'error',
+                                  autoDismiss: true,
+                                }
+                              );
+                            } else if (resp.fanarttv === 'failed') {
+                              addToast(
+                                intl.formatMessage(
+                                  messages.fanarttvProviderDoesnotWork
                                 ),
                                 {
                                   appearance: 'error',

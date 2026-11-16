@@ -1,3 +1,4 @@
+import FanartTvAPI from '@server/api/fanarttv';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import MusicBrainzAPI from '@server/api/musicbrainz';
 import { Permission } from '@server/lib/permissions';
@@ -40,6 +41,25 @@ function getDefaultLidarr() {
   };
 }
 
+// A failed or missing Fanart.tv lookup must never take down a search or
+// artist page -- it's decoration, not data the rest of the response depends
+// on. Every caller gets {} back instead of a rejected promise.
+async function lookupArtistImages(
+  fanarttv: FanartTvAPI,
+  mbid: string
+): Promise<{ thumbUrl?: string; backgroundUrl?: string }> {
+  try {
+    return await fanarttv.getArtistImages(mbid);
+  } catch (e) {
+    logger.warn('Failed to fetch Fanart.tv images for artist', {
+      label: 'Music',
+      mbid,
+      message: e.message,
+    });
+    return {};
+  }
+}
+
 musicRoutes.get('/search', async (req, res, next) => {
   const query = (req.query.query as string | undefined) ?? '';
 
@@ -47,13 +67,22 @@ musicRoutes.get('/search', async (req, res, next) => {
     const musicbrainz = new MusicBrainzAPI();
     const artists = await musicbrainz.searchArtists(query);
 
+    const fanarttv = new FanartTvAPI();
+    const images: { thumbUrl?: string; backgroundUrl?: string }[] =
+      fanarttv.hasApiKey
+        ? await Promise.all(
+            artists.map((artist) => lookupArtistImages(fanarttv, artist.id))
+          )
+        : artists.map(() => ({}));
+
     return res.status(200).json({
-      results: artists.map((artist) => ({
+      results: artists.map((artist, i) => ({
         mbid: artist.id,
         name: artist.name,
         type: artist.type,
         disambiguation: artist.disambiguation,
         country: artist.country,
+        imageUrl: images[i].thumbUrl,
       })),
     });
   } catch (e) {
@@ -69,6 +98,11 @@ musicRoutes.get<{ mbid: string }>('/artist/:mbid', async (req, res, next) => {
   try {
     const musicbrainz = new MusicBrainzAPI();
     const artist = await musicbrainz.getArtist(req.params.mbid);
+
+    const fanarttv = new FanartTvAPI();
+    const images = fanarttv.hasApiKey
+      ? await lookupArtistImages(fanarttv, req.params.mbid)
+      : {};
 
     let alreadyAdded = false;
     const lidarr = getDefaultLidarr();
@@ -95,6 +129,8 @@ musicRoutes.get<{ mbid: string }>('/artist/:mbid', async (req, res, next) => {
       disambiguation: artist.disambiguation,
       type: artist.type,
       country: artist.country,
+      imageUrl: images.thumbUrl,
+      backgroundUrl: images.backgroundUrl,
       releaseGroups: (artist['release-groups'] ?? [])
         .filter((rg) => rg['primary-type'] === 'Album')
         .sort((a, b) =>

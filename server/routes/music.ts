@@ -136,6 +136,12 @@ musicRoutes.get<{ mbid: string }>('/artist/:mbid', async (req, res, next) => {
       endYear: artist['life-span']?.ended
         ? artist['life-span']?.end?.slice(0, 4)
         : undefined,
+      // MusicBrainz's own community rating, 0-5. Sparse -- most artists have
+      // no votes -- but real where it exists, unlike the search row (see
+      // getArtist's inc=ratings: only a single-artist lookup can ask for it,
+      // never the search endpoint, so this can't be added to /search too).
+      rating: artist.rating?.value,
+      ratingVotes: artist.rating?.['votes-count'],
       releaseGroups: (artist['release-groups'] ?? [])
         .filter((rg) => rg['primary-type'] === 'Album')
         .sort((a, b) =>

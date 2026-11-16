@@ -15,6 +15,9 @@ export interface MusicBrainzArtist {
   country?: string;
   score?: number;
   'life-span'?: { begin?: string; end?: string; ended?: boolean };
+  // Only present when the request asked for inc=ratings -- a community
+  // rating (0-5), not TMDB-style and far sparser: most artists have none.
+  rating?: { value?: number; 'votes-count'?: number };
 }
 
 interface MusicBrainzArtistSearchResponse {
@@ -79,7 +82,7 @@ class MusicBrainzAPI extends ExternalAPI {
     try {
       const data = await this.get<MusicBrainzArtistDetail>(
         `/artist/${mbid}`,
-        { params: { inc: 'release-groups' } },
+        { params: { inc: 'release-groups ratings' } },
         21600
       );
 

@@ -57,6 +57,13 @@ class MusicBrainzAPI extends ExternalAPI {
     );
   }
 
+  // Capped at 20 (MusicBrainz's own default would be ~25) to match the page
+  // size Seerr's TMDB movie/show search uses, and -- more importantly -- to
+  // bound how many Fanart.tv image lookups music.ts's /search route fans out
+  // to afterwards (one per returned artist, itself rate-limited to 5/sec).
+  // MusicBrainz already returns artist search results ranked by its own
+  // relevance score, so this keeps the top N most relevant, not an arbitrary
+  // slice.
   public searchArtists = async (query: string): Promise<MusicBrainzArtist[]> => {
     if (!query.trim()) {
       return [];
@@ -65,7 +72,7 @@ class MusicBrainzAPI extends ExternalAPI {
     try {
       const data = await this.get<MusicBrainzArtistSearchResponse>(
         '/artist',
-        { params: { query } },
+        { params: { query, limit: 20 } },
         21600
       );
 

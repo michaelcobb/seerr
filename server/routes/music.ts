@@ -60,30 +60,109 @@ async function lookupArtistImages(
   }
 }
 
+type CombinedMusicResult = {
+  mbid: string;
+  name: string;
+  type?: string;
+  disambiguation?: string;
+  country?: string;
+  beginYear?: string;
+  score: number;
+  matchType: 'artist' | 'album' | 'song';
+  matchTitle?: string;
+};
+
 musicRoutes.get('/search', async (req, res, next) => {
   const query = (req.query.query as string | undefined) ?? '';
 
   try {
+    // One MusicBrainzAPI instance for all three calls, so they share its
+    // rate limiter (MusicBrainz's 1-request/second anonymous-access
+    // courtesy rate) instead of three separate clients all pretending to be
+    // the only one talking to MusicBrainz. Promise.all just queues them --
+    // the limiter still paces the actual requests out, so a from-cold
+    // search here takes a couple of seconds longer than the old
+    // artist-only version.
     const musicbrainz = new MusicBrainzAPI();
-    const artists = await musicbrainz.searchArtists(query);
+    const [artists, releaseGroups, recordings] = await Promise.all([
+      musicbrainz.searchArtists(query),
+      musicbrainz.searchReleaseGroups(query),
+      musicbrainz.searchRecordings(query),
+    ]);
 
-    const fanarttv = new FanartTvAPI();
-    const images: { thumbUrl?: string; backgroundUrl?: string }[] =
-      fanarttv.hasApiKey
-        ? await Promise.all(
-            artists.map((artist) => lookupArtistImages(fanarttv, artist.id))
-          )
-        : artists.map(() => ({}));
+    // Seerr's music feature only ever requests a whole artist to Lidarr
+    // (see /request below), so a song or album hit is really just a better
+    // way to *find* the right artist -- it still resolves down to one
+    // artist-shaped card. Dedupe by artist mbid; a direct artist-name match
+    // always wins a collision since it carries richer data (type, country,
+    // formation year) than an artist-credit embedded in an album/song hit.
+    const byArtistId = new Map<string, CombinedMusicResult>();
 
-    return res.status(200).json({
-      results: artists.map((artist, i) => ({
+    for (const artist of artists) {
+      byArtistId.set(artist.id, {
         mbid: artist.id,
         name: artist.name,
         type: artist.type,
         disambiguation: artist.disambiguation,
         country: artist.country,
-        imageUrl: images[i].thumbUrl,
         beginYear: artist['life-span']?.begin?.slice(0, 4),
+        score: artist.score ?? 0,
+        matchType: 'artist',
+      });
+    }
+
+    for (const releaseGroup of releaseGroups) {
+      const credit = releaseGroup['artist-credit']?.[0]?.artist;
+      if (!credit || byArtistId.has(credit.id)) continue;
+      byArtistId.set(credit.id, {
+        mbid: credit.id,
+        name: credit.name,
+        disambiguation: credit.disambiguation,
+        score: releaseGroup.score ?? 0,
+        matchType: 'album',
+        matchTitle: releaseGroup.title,
+      });
+    }
+
+    for (const recording of recordings) {
+      const credit = recording['artist-credit']?.[0]?.artist;
+      if (!credit || byArtistId.has(credit.id)) continue;
+      byArtistId.set(credit.id, {
+        mbid: credit.id,
+        name: credit.name,
+        disambiguation: credit.disambiguation,
+        score: recording.score ?? 0,
+        matchType: 'song',
+        matchTitle: recording.title,
+      });
+    }
+
+    // One relevance-sorted list, capped the same as the old artist-only
+    // search (20) so the Fanart.tv fan-out below stays bounded no matter
+    // how many of the three searches contributed hits.
+    const combined = Array.from(byArtistId.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+
+    const fanarttv = new FanartTvAPI();
+    const images: { thumbUrl?: string; backgroundUrl?: string }[] =
+      fanarttv.hasApiKey
+        ? await Promise.all(
+            combined.map((result) => lookupArtistImages(fanarttv, result.mbid))
+          )
+        : combined.map(() => ({}));
+
+    return res.status(200).json({
+      results: combined.map((result, i) => ({
+        mbid: result.mbid,
+        name: result.name,
+        type: result.type,
+        disambiguation: result.disambiguation,
+        country: result.country,
+        imageUrl: images[i].thumbUrl,
+        beginYear: result.beginYear,
+        matchType: result.matchType,
+        matchTitle: result.matchTitle,
       })),
     });
   } catch (e) {

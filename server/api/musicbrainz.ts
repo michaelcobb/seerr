@@ -39,6 +39,49 @@ interface MusicBrainzArtistDetail extends MusicBrainzArtist {
   'release-groups'?: MusicBrainzReleaseGroup[];
 }
 
+// The artist embedded in an album/song search hit. MusicBrainz only gives
+// us id/name/disambiguation here -- no type, country, or life-span, which
+// is why an album/song match in music.ts's /search route can't fill in
+// those fields the way a direct artist-name match can.
+export interface MusicBrainzArtistCredit {
+  name: string;
+  artist: {
+    id: string;
+    name: string;
+    disambiguation?: string;
+  };
+}
+
+export interface MusicBrainzReleaseGroupSearchResult {
+  id: string;
+  title: string;
+  'primary-type'?: string;
+  'first-release-date'?: string;
+  score?: number;
+  'artist-credit'?: MusicBrainzArtistCredit[];
+}
+
+interface MusicBrainzReleaseGroupSearchResponse {
+  created: string;
+  count: number;
+  offset: number;
+  'release-groups': MusicBrainzReleaseGroupSearchResult[];
+}
+
+export interface MusicBrainzRecording {
+  id: string;
+  title: string;
+  score?: number;
+  'artist-credit'?: MusicBrainzArtistCredit[];
+}
+
+interface MusicBrainzRecordingSearchResponse {
+  created: string;
+  count: number;
+  offset: number;
+  recordings: MusicBrainzRecording[];
+}
+
 class MusicBrainzAPI extends ExternalAPI {
   constructor() {
     super(
@@ -80,6 +123,59 @@ class MusicBrainzAPI extends ExternalAPI {
     } catch (e) {
       throw new Error(
         `[MusicBrainz] Failed to search artists: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  // Albums (release-groups), searched by title. Capped at 10 -- smaller than
+  // searchArtists' 20 -- since this is a secondary signal layered on top of
+  // the primary artist search (see music.ts's /search route), and every hit
+  // here still needs its own Fanart.tv lookup once resolved down to an
+  // artist.
+  public searchReleaseGroups = async (
+    query: string
+  ): Promise<MusicBrainzReleaseGroupSearchResult[]> => {
+    if (!query.trim()) {
+      return [];
+    }
+
+    try {
+      const data = await this.get<MusicBrainzReleaseGroupSearchResponse>(
+        '/release-group',
+        { params: { query, limit: 10 } },
+        21600
+      );
+
+      return data['release-groups'];
+    } catch (e) {
+      throw new Error(
+        `[MusicBrainz] Failed to search release groups: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  // Songs (recordings), searched by title. See searchReleaseGroups for why
+  // this is capped smaller than the primary artist search.
+  public searchRecordings = async (
+    query: string
+  ): Promise<MusicBrainzRecording[]> => {
+    if (!query.trim()) {
+      return [];
+    }
+
+    try {
+      const data = await this.get<MusicBrainzRecordingSearchResponse>(
+        '/recording',
+        { params: { query, limit: 10 } },
+        21600
+      );
+
+      return data.recordings;
+    } catch (e) {
+      throw new Error(
+        `[MusicBrainz] Failed to search recordings: ${e.message}`,
         { cause: e }
       );
     }

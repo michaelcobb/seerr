@@ -176,14 +176,31 @@ musicRoutes.get('/search', async (req, res, next) => {
           )
         : combined.map(() => ({}));
 
+    // MusicBrainz has no popularity signal at all -- it's pure metadata, not
+    // a charts/plays service, so "Champion" turns up just as many one-off
+    // bands literally named Champion as it does famous artists with a
+    // "Champion" song or album. Fanart.tv only has art for artists someone
+    // actually bothered to upload for, which in practice tracks "is this
+    // artist someone people have heard of" reasonably well -- so re-rank
+    // using that as a popularity proxy, with MusicBrainz's own text-
+    // relevance score only as the tiebreaker within each group.
+    const ranked = combined
+      .map((result, i) => ({ result, image: images[i] }))
+      .sort((a, b) => {
+        const aHasArt = a.image.thumbUrl ? 1 : 0;
+        const bHasArt = b.image.thumbUrl ? 1 : 0;
+        if (aHasArt !== bHasArt) return bHasArt - aHasArt;
+        return b.result.score - a.result.score;
+      });
+
     return res.status(200).json({
-      results: combined.map((result, i) => ({
+      results: ranked.map(({ result, image }) => ({
         mbid: result.mbid,
         name: result.name,
         type: result.type,
         disambiguation: result.disambiguation,
         country: result.country,
-        imageUrl: images[i].thumbUrl,
+        imageUrl: image.thumbUrl,
         beginYear: result.beginYear,
         matchType: result.matchType,
         matchTitle: result.matchTitle,

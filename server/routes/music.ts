@@ -1,6 +1,6 @@
 import FanartTvAPI from '@server/api/fanarttv';
 import LidarrAPI from '@server/api/servarr/lidarr';
-import { getMusicBrainzAPI } from '@server/api/musicbrainz';
+import MusicBrainzAPI from '@server/api/musicbrainz';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -60,150 +60,30 @@ async function lookupArtistImages(
   }
 }
 
-type CombinedMusicResult = {
-  mbid: string;
-  name: string;
-  type?: string;
-  disambiguation?: string;
-  country?: string;
-  beginYear?: string;
-  score: number;
-  matchType: 'artist' | 'album' | 'song';
-  matchTitle?: string;
-};
-
 musicRoutes.get('/search', async (req, res, next) => {
   const query = (req.query.query as string | undefined) ?? '';
 
   try {
-    // The shared, process-wide MusicBrainzAPI instance (see
-    // getMusicBrainzAPI) so these three calls -- and every other concurrent
-    // search -- are actually paced at MusicBrainz's 1-request/second
-    // courtesy rate, not just within this one request. That's still only
-    // this server's own pacing, not MusicBrainz's -- their side can and
-    // does hand back a 503 of its own when it's under load, independent of
-    // how politely we ask. allSettled (not all) means one of the three
-    // endpoints 503ing degrades that one down to "no results from this
-    // endpoint" instead of failing the whole search; each one's rejection
-    // is logged just below.
-    const musicbrainz = getMusicBrainzAPI();
-    const [artistsResult, releaseGroupsResult, recordingsResult] =
-      await Promise.allSettled([
-        musicbrainz.searchArtists(query),
-        musicbrainz.searchReleaseGroups(query),
-        musicbrainz.searchRecordings(query),
-      ]);
-    // allSettled swallows the rejection itself, so log each one here --
-    // otherwise a MusicBrainz 503 on, say, recordings would silently vanish
-    // into an empty array with no trace in the logs at all.
-    const logFailure = (type: string, result: PromiseSettledResult<unknown>) => {
-      if (result.status === 'rejected') {
-        logger.warn(`Music search: ${type} lookup failed, continuing without it`, {
-          label: 'Music',
-          message: result.reason?.message ?? result.reason,
-        });
-      }
-    };
-    logFailure('artist', artistsResult);
-    logFailure('release-group', releaseGroupsResult);
-    logFailure('recording', recordingsResult);
-
-    const artists = artistsResult.status === 'fulfilled' ? artistsResult.value : [];
-    const releaseGroups =
-      releaseGroupsResult.status === 'fulfilled' ? releaseGroupsResult.value : [];
-    const recordings =
-      recordingsResult.status === 'fulfilled' ? recordingsResult.value : [];
-
-    // Seerr's music feature only ever requests a whole artist to Lidarr
-    // (see /request below), so a song or album hit is really just a better
-    // way to *find* the right artist -- it still resolves down to one
-    // artist-shaped card. Dedupe by artist mbid; a direct artist-name match
-    // always wins a collision since it carries richer data (type, country,
-    // formation year) than an artist-credit embedded in an album/song hit.
-    const byArtistId = new Map<string, CombinedMusicResult>();
-
-    for (const artist of artists) {
-      byArtistId.set(artist.id, {
-        mbid: artist.id,
-        name: artist.name,
-        type: artist.type,
-        disambiguation: artist.disambiguation,
-        country: artist.country,
-        beginYear: artist['life-span']?.begin?.slice(0, 4),
-        score: artist.score ?? 0,
-        matchType: 'artist',
-      });
-    }
-
-    for (const releaseGroup of releaseGroups) {
-      const credit = releaseGroup['artist-credit']?.[0]?.artist;
-      if (!credit || byArtistId.has(credit.id)) continue;
-      byArtistId.set(credit.id, {
-        mbid: credit.id,
-        name: credit.name,
-        disambiguation: credit.disambiguation,
-        score: releaseGroup.score ?? 0,
-        matchType: 'album',
-        matchTitle: releaseGroup.title,
-      });
-    }
-
-    for (const recording of recordings) {
-      const credit = recording['artist-credit']?.[0]?.artist;
-      if (!credit || byArtistId.has(credit.id)) continue;
-      byArtistId.set(credit.id, {
-        mbid: credit.id,
-        name: credit.name,
-        disambiguation: credit.disambiguation,
-        score: recording.score ?? 0,
-        matchType: 'song',
-        matchTitle: recording.title,
-      });
-    }
-
-    // One relevance-sorted list, capped the same as the old artist-only
-    // search (20) so the Fanart.tv fan-out below stays bounded no matter
-    // how many of the three searches contributed hits.
-    const combined = Array.from(byArtistId.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
+    const musicbrainz = new MusicBrainzAPI();
+    const artists = await musicbrainz.searchArtists(query);
 
     const fanarttv = new FanartTvAPI();
     const images: { thumbUrl?: string; backgroundUrl?: string }[] =
       fanarttv.hasApiKey
         ? await Promise.all(
-            combined.map((result) => lookupArtistImages(fanarttv, result.mbid))
+            artists.map((artist) => lookupArtistImages(fanarttv, artist.id))
           )
-        : combined.map(() => ({}));
-
-    // MusicBrainz has no popularity signal at all -- it's pure metadata, not
-    // a charts/plays service, so "Champion" turns up just as many one-off
-    // bands literally named Champion as it does famous artists with a
-    // "Champion" song or album. Fanart.tv only has art for artists someone
-    // actually bothered to upload for, which in practice tracks "is this
-    // artist someone people have heard of" reasonably well -- so re-rank
-    // using that as a popularity proxy, with MusicBrainz's own text-
-    // relevance score only as the tiebreaker within each group.
-    const ranked = combined
-      .map((result, i) => ({ result, image: images[i] }))
-      .sort((a, b) => {
-        const aHasArt = a.image.thumbUrl ? 1 : 0;
-        const bHasArt = b.image.thumbUrl ? 1 : 0;
-        if (aHasArt !== bHasArt) return bHasArt - aHasArt;
-        return b.result.score - a.result.score;
-      });
+        : artists.map(() => ({}));
 
     return res.status(200).json({
-      results: ranked.map(({ result, image }) => ({
-        mbid: result.mbid,
-        name: result.name,
-        type: result.type,
-        disambiguation: result.disambiguation,
-        country: result.country,
-        imageUrl: image.thumbUrl,
-        beginYear: result.beginYear,
-        matchType: result.matchType,
-        matchTitle: result.matchTitle,
+      results: artists.map((artist, i) => ({
+        mbid: artist.id,
+        name: artist.name,
+        type: artist.type,
+        disambiguation: artist.disambiguation,
+        country: artist.country,
+        imageUrl: images[i].thumbUrl,
+        beginYear: artist['life-span']?.begin?.slice(0, 4),
       })),
     });
   } catch (e) {
@@ -217,7 +97,7 @@ musicRoutes.get('/search', async (req, res, next) => {
 
 musicRoutes.get<{ mbid: string }>('/artist/:mbid', async (req, res, next) => {
   try {
-    const musicbrainz = getMusicBrainzAPI();
+    const musicbrainz = new MusicBrainzAPI();
     const artist = await musicbrainz.getArtist(req.params.mbid);
 
     const fanarttv = new FanartTvAPI();

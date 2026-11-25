@@ -7,32 +7,6 @@ import ExternalAPI from '@server/api/externalapi';
 const MUSICBRAINZ_USER_AGENT =
   'Seerr-Lidarr-Patch/1.0 ( https://github.com/michaelcobb/seerr )';
 
-// A failed call (a 503 from MusicBrainz's own throttling, say) is never
-// cached by ExternalAPI.get() -- only a success is. Without this, every
-// keystroke of a debounced search retries the network call again
-// immediately, which just keeps hammering MusicBrainz while it's already
-// telling us to back off, likely extending whatever throttle window we
-// tripped. Remember a failure for a short window per (endpoint, query) and
-// return an empty result straight away instead of retrying during it; the
-// normal 6-hour success cache in get() covers the happy path, this only
-// covers the unhappy one.
-const FAILURE_BACKOFF_MS = 30_000;
-const recentFailures = new Map<string, number>();
-
-function isInBackoff(key: string): boolean {
-  const until = recentFailures.get(key);
-  if (!until) return false;
-  if (Date.now() >= until) {
-    recentFailures.delete(key);
-    return false;
-  }
-  return true;
-}
-
-function recordFailure(key: string) {
-  recentFailures.set(key, Date.now() + FAILURE_BACKOFF_MS);
-}
-
 export interface MusicBrainzArtist {
   id: string; // MusicBrainz ID (mbid)
   name: string;
@@ -65,49 +39,6 @@ interface MusicBrainzArtistDetail extends MusicBrainzArtist {
   'release-groups'?: MusicBrainzReleaseGroup[];
 }
 
-// The artist embedded in an album/song search hit. MusicBrainz only gives
-// us id/name/disambiguation here -- no type, country, or life-span, which
-// is why an album/song match in music.ts's /search route can't fill in
-// those fields the way a direct artist-name match can.
-export interface MusicBrainzArtistCredit {
-  name: string;
-  artist: {
-    id: string;
-    name: string;
-    disambiguation?: string;
-  };
-}
-
-export interface MusicBrainzReleaseGroupSearchResult {
-  id: string;
-  title: string;
-  'primary-type'?: string;
-  'first-release-date'?: string;
-  score?: number;
-  'artist-credit'?: MusicBrainzArtistCredit[];
-}
-
-interface MusicBrainzReleaseGroupSearchResponse {
-  created: string;
-  count: number;
-  offset: number;
-  'release-groups': MusicBrainzReleaseGroupSearchResult[];
-}
-
-export interface MusicBrainzRecording {
-  id: string;
-  title: string;
-  score?: number;
-  'artist-credit'?: MusicBrainzArtistCredit[];
-}
-
-interface MusicBrainzRecordingSearchResponse {
-  created: string;
-  count: number;
-  offset: number;
-  recordings: MusicBrainzRecording[];
-}
-
 class MusicBrainzAPI extends ExternalAPI {
   constructor() {
     super(
@@ -138,11 +69,6 @@ class MusicBrainzAPI extends ExternalAPI {
       return [];
     }
 
-    const backoffKey = `artist:${query}`;
-    if (isInBackoff(backoffKey)) {
-      return [];
-    }
-
     try {
       const data = await this.get<MusicBrainzArtistSearchResponse>(
         '/artist',
@@ -152,74 +78,8 @@ class MusicBrainzAPI extends ExternalAPI {
 
       return data.artists;
     } catch (e) {
-      recordFailure(backoffKey);
       throw new Error(
         `[MusicBrainz] Failed to search artists: ${e.message}`,
-        { cause: e }
-      );
-    }
-  };
-
-  // Albums (release-groups), searched by title. Capped at 10 -- smaller than
-  // searchArtists' 20 -- since this is a secondary signal layered on top of
-  // the primary artist search (see music.ts's /search route), and every hit
-  // here still needs its own Fanart.tv lookup once resolved down to an
-  // artist.
-  public searchReleaseGroups = async (
-    query: string
-  ): Promise<MusicBrainzReleaseGroupSearchResult[]> => {
-    if (!query.trim()) {
-      return [];
-    }
-
-    const backoffKey = `release-group:${query}`;
-    if (isInBackoff(backoffKey)) {
-      return [];
-    }
-
-    try {
-      const data = await this.get<MusicBrainzReleaseGroupSearchResponse>(
-        '/release-group',
-        { params: { query, limit: 10 } },
-        21600
-      );
-
-      return data['release-groups'];
-    } catch (e) {
-      recordFailure(backoffKey);
-      throw new Error(
-        `[MusicBrainz] Failed to search release groups: ${e.message}`,
-        { cause: e }
-      );
-    }
-  };
-
-  // Songs (recordings), searched by title. See searchReleaseGroups for why
-  // this is capped smaller than the primary artist search.
-  public searchRecordings = async (
-    query: string
-  ): Promise<MusicBrainzRecording[]> => {
-    if (!query.trim()) {
-      return [];
-    }
-
-    const backoffKey = `recording:${query}`;
-    if (isInBackoff(backoffKey)) {
-      return [];
-    }
-
-    try {
-      const data = await this.get<MusicBrainzRecordingSearchResponse>(
-        '/recording',
-        { params: { query, limit: 10 } },
-        21600
-      );
-
-      return data.recordings;
-    } catch (e) {
-      recordFailure(backoffKey);
-      throw new Error(
-        `[MusicBrainz] Failed to search recordings: ${e.message}`,
         { cause: e }
       );
     }
@@ -244,22 +104,3 @@ class MusicBrainzAPI extends ExternalAPI {
 }
 
 export default MusicBrainzAPI;
-
-// MusicBrainz's 1-request/second anonymous-access courtesy rate is enforced
-// by the rate limiter on an individual axios instance -- it has no idea
-// about any other instance. `new MusicBrainzAPI()` per request (as
-// music.ts's routes used to do) means every concurrent search mints its own
-// limiter, each independently convinced it's the only thing talking to
-// MusicBrainz, so the *real*, combined request rate from this server can run
-// well past what MusicBrainz actually tolerates -- which is exactly what was
-// producing live 503s from MusicBrainz once a single search started making
-// three calls (artist/release-group/recording) instead of one. One shared,
-// lazily-created instance for the whole process makes the 1/sec limiter mean
-// what it says across every concurrent search, not just within one.
-let sharedInstance: MusicBrainzAPI | undefined;
-export function getMusicBrainzAPI(): MusicBrainzAPI {
-  if (!sharedInstance) {
-    sharedInstance = new MusicBrainzAPI();
-  }
-  return sharedInstance;
-}

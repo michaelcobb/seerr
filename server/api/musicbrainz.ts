@@ -7,6 +7,32 @@ import ExternalAPI from '@server/api/externalapi';
 const MUSICBRAINZ_USER_AGENT =
   'Seerr-Lidarr-Patch/1.0 ( https://github.com/michaelcobb/seerr )';
 
+// A failed call (a 503 from MusicBrainz's own throttling, say) is never
+// cached by ExternalAPI.get() -- only a success is. Without this, every
+// keystroke of a debounced search retries the network call again
+// immediately, which just keeps hammering MusicBrainz while it's already
+// telling us to back off, likely extending whatever throttle window we
+// tripped. Remember a failure for a short window per (endpoint, query) and
+// return an empty result straight away instead of retrying during it; the
+// normal 6-hour success cache in get() covers the happy path, this only
+// covers the unhappy one.
+const FAILURE_BACKOFF_MS = 30_000;
+const recentFailures = new Map<string, number>();
+
+function isInBackoff(key: string): boolean {
+  const until = recentFailures.get(key);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    recentFailures.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function recordFailure(key: string) {
+  recentFailures.set(key, Date.now() + FAILURE_BACKOFF_MS);
+}
+
 export interface MusicBrainzArtist {
   id: string; // MusicBrainz ID (mbid)
   name: string;
@@ -112,6 +138,11 @@ class MusicBrainzAPI extends ExternalAPI {
       return [];
     }
 
+    const backoffKey = `artist:${query}`;
+    if (isInBackoff(backoffKey)) {
+      return [];
+    }
+
     try {
       const data = await this.get<MusicBrainzArtistSearchResponse>(
         '/artist',
@@ -121,6 +152,7 @@ class MusicBrainzAPI extends ExternalAPI {
 
       return data.artists;
     } catch (e) {
+      recordFailure(backoffKey);
       throw new Error(
         `[MusicBrainz] Failed to search artists: ${e.message}`,
         { cause: e }
@@ -140,6 +172,11 @@ class MusicBrainzAPI extends ExternalAPI {
       return [];
     }
 
+    const backoffKey = `release-group:${query}`;
+    if (isInBackoff(backoffKey)) {
+      return [];
+    }
+
     try {
       const data = await this.get<MusicBrainzReleaseGroupSearchResponse>(
         '/release-group',
@@ -149,6 +186,7 @@ class MusicBrainzAPI extends ExternalAPI {
 
       return data['release-groups'];
     } catch (e) {
+      recordFailure(backoffKey);
       throw new Error(
         `[MusicBrainz] Failed to search release groups: ${e.message}`,
         { cause: e }
@@ -165,6 +203,11 @@ class MusicBrainzAPI extends ExternalAPI {
       return [];
     }
 
+    const backoffKey = `recording:${query}`;
+    if (isInBackoff(backoffKey)) {
+      return [];
+    }
+
     try {
       const data = await this.get<MusicBrainzRecordingSearchResponse>(
         '/recording',
@@ -174,6 +217,7 @@ class MusicBrainzAPI extends ExternalAPI {
 
       return data.recordings;
     } catch (e) {
+      recordFailure(backoffKey);
       throw new Error(
         `[MusicBrainz] Failed to search recordings: ${e.message}`,
         { cause: e }

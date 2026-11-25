@@ -79,16 +79,39 @@ musicRoutes.get('/search', async (req, res, next) => {
     // One MusicBrainzAPI instance for all three calls, so they share its
     // rate limiter (MusicBrainz's 1-request/second anonymous-access
     // courtesy rate) instead of three separate clients all pretending to be
-    // the only one talking to MusicBrainz. Promise.all just queues them --
-    // the limiter still paces the actual requests out, so a from-cold
-    // search here takes a couple of seconds longer than the old
-    // artist-only version.
+    // the only one talking to MusicBrainz. That's still only this server's
+    // own pacing, not MusicBrainz's -- their side can and does hand back a
+    // 503 on its own when it's under load, independent of how politely we
+    // ask. allSettled (not all) means one of the three endpoints 503ing
+    // degrades that one down to "no results from this endpoint" instead of
+    // failing the whole search; each one's rejection is logged just below.
     const musicbrainz = new MusicBrainzAPI();
-    const [artists, releaseGroups, recordings] = await Promise.all([
-      musicbrainz.searchArtists(query),
-      musicbrainz.searchReleaseGroups(query),
-      musicbrainz.searchRecordings(query),
-    ]);
+    const [artistsResult, releaseGroupsResult, recordingsResult] =
+      await Promise.allSettled([
+        musicbrainz.searchArtists(query),
+        musicbrainz.searchReleaseGroups(query),
+        musicbrainz.searchRecordings(query),
+      ]);
+    // allSettled swallows the rejection itself, so log each one here --
+    // otherwise a MusicBrainz 503 on, say, recordings would silently vanish
+    // into an empty array with no trace in the logs at all.
+    const logFailure = (type: string, result: PromiseSettledResult<unknown>) => {
+      if (result.status === 'rejected') {
+        logger.warn(`Music search: ${type} lookup failed, continuing without it`, {
+          label: 'Music',
+          message: result.reason?.message ?? result.reason,
+        });
+      }
+    };
+    logFailure('artist', artistsResult);
+    logFailure('release-group', releaseGroupsResult);
+    logFailure('recording', recordingsResult);
+
+    const artists = artistsResult.status === 'fulfilled' ? artistsResult.value : [];
+    const releaseGroups =
+      releaseGroupsResult.status === 'fulfilled' ? releaseGroupsResult.value : [];
+    const recordings =
+      recordingsResult.status === 'fulfilled' ? recordingsResult.value : [];
 
     // Seerr's music feature only ever requests a whole artist to Lidarr
     // (see /request below), so a song or album hit is really just a better

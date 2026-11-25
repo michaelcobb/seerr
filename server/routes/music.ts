@@ -1,6 +1,6 @@
 import FanartTvAPI from '@server/api/fanarttv';
 import LidarrAPI from '@server/api/servarr/lidarr';
-import MusicBrainzAPI from '@server/api/musicbrainz';
+import { getMusicBrainzAPI } from '@server/api/musicbrainz';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -76,16 +76,17 @@ musicRoutes.get('/search', async (req, res, next) => {
   const query = (req.query.query as string | undefined) ?? '';
 
   try {
-    // One MusicBrainzAPI instance for all three calls, so they share its
-    // rate limiter (MusicBrainz's 1-request/second anonymous-access
-    // courtesy rate) instead of three separate clients all pretending to be
-    // the only one talking to MusicBrainz. That's still only this server's
-    // own pacing, not MusicBrainz's -- their side can and does hand back a
-    // 503 on its own when it's under load, independent of how politely we
-    // ask. allSettled (not all) means one of the three endpoints 503ing
-    // degrades that one down to "no results from this endpoint" instead of
-    // failing the whole search; each one's rejection is logged just below.
-    const musicbrainz = new MusicBrainzAPI();
+    // The shared, process-wide MusicBrainzAPI instance (see
+    // getMusicBrainzAPI) so these three calls -- and every other concurrent
+    // search -- are actually paced at MusicBrainz's 1-request/second
+    // courtesy rate, not just within this one request. That's still only
+    // this server's own pacing, not MusicBrainz's -- their side can and
+    // does hand back a 503 of its own when it's under load, independent of
+    // how politely we ask. allSettled (not all) means one of the three
+    // endpoints 503ing degrades that one down to "no results from this
+    // endpoint" instead of failing the whole search; each one's rejection
+    // is logged just below.
+    const musicbrainz = getMusicBrainzAPI();
     const [artistsResult, releaseGroupsResult, recordingsResult] =
       await Promise.allSettled([
         musicbrainz.searchArtists(query),
@@ -199,7 +200,7 @@ musicRoutes.get('/search', async (req, res, next) => {
 
 musicRoutes.get<{ mbid: string }>('/artist/:mbid', async (req, res, next) => {
   try {
-    const musicbrainz = new MusicBrainzAPI();
+    const musicbrainz = getMusicBrainzAPI();
     const artist = await musicbrainz.getArtist(req.params.mbid);
 
     const fanarttv = new FanartTvAPI();

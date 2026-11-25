@@ -200,3 +200,22 @@ class MusicBrainzAPI extends ExternalAPI {
 }
 
 export default MusicBrainzAPI;
+
+// MusicBrainz's 1-request/second anonymous-access courtesy rate is enforced
+// by the rate limiter on an individual axios instance -- it has no idea
+// about any other instance. `new MusicBrainzAPI()` per request (as
+// music.ts's routes used to do) means every concurrent search mints its own
+// limiter, each independently convinced it's the only thing talking to
+// MusicBrainz, so the *real*, combined request rate from this server can run
+// well past what MusicBrainz actually tolerates -- which is exactly what was
+// producing live 503s from MusicBrainz once a single search started making
+// three calls (artist/release-group/recording) instead of one. One shared,
+// lazily-created instance for the whole process makes the 1/sec limiter mean
+// what it says across every concurrent search, not just within one.
+let sharedInstance: MusicBrainzAPI | undefined;
+export function getMusicBrainzAPI(): MusicBrainzAPI {
+  if (!sharedInstance) {
+    sharedInstance = new MusicBrainzAPI();
+  }
+  return sharedInstance;
+}
